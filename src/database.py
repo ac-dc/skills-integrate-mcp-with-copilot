@@ -82,7 +82,8 @@ class ActivityRepository:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     email TEXT NOT NULL UNIQUE,
                     name TEXT,
-                    role TEXT
+                    role TEXT,
+                    password_hash TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS clubs (
@@ -120,8 +121,20 @@ class ActivityRepository:
                 """
             )
 
+            self._ensure_schema_migrations(connection)
+
             if seed:
                 self.seed_default_data(connection)
+
+    def _ensure_schema_migrations(self, connection: sqlite3.Connection) -> None:
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA table_info(users)")
+        user_columns = {row["name"] for row in cursor.fetchall()}
+
+        if "password_hash" not in user_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+
+        connection.commit()
 
     def seed_default_data(self, connection: sqlite3.Connection | None = None) -> None:
         if connection is None:
@@ -233,3 +246,42 @@ class ActivityRepository:
                 raise ValueError("Student is not signed up for this activity")
 
             connection.commit()
+
+    def create_user(self, email: str, password_hash: str, role: str = "student") -> None:
+        with self._connect() as connection:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO users (email, role, password_hash)
+                    VALUES (?, ?, ?)
+                    """,
+                    (email, role, password_hash),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError("User already exists") from error
+
+            connection.commit()
+
+    def get_user_by_email(self, email: str) -> Dict[str, Any] | None:
+        with self._connect() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT id, email, name, role, password_hash
+                FROM users
+                WHERE email = ?
+                """,
+                (email,),
+            )
+            user = cursor.fetchone()
+            if not user:
+                return None
+
+            return {
+                "id": user["id"],
+                "email": user["email"],
+                "name": user["name"],
+                "role": user["role"],
+                "password_hash": user["password_hash"],
+            }
